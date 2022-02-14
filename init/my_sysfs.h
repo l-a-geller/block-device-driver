@@ -5,6 +5,10 @@
 #define BUS_NAME "mybus"
 #define DRIVER_NAME "mydriver"
 #define DEVICE_COMMAND_CREATE "create"
+#define DEVICE_COMMAND_SETMODE "setmode"
+#define DEVICE_COMMAND_LIST "Command list:\n" \
+                            "create device: create device_name device_capacity (in sectors)\n" \
+                            "set device mode: setmode device_name device_mode (1 - read only, 0 - read & write)" \
 
 struct user_device_list *user_device_list_head = NULL;
 
@@ -68,6 +72,7 @@ int my_register_device(struct block_dev *mydev, char* dev_name)
 
 void my_unregister_device(struct block_dev *mydev)
 {
+    pr_info("MYDRIVE: (device) unregistering device...\n");
     if (!mydev -> gd) return;
     if (!mydev -> gd -> major || !mydev -> gd -> disk_name) return;
     unregister_blkdev(mydev -> gd -> major, mydev -> gd -> disk_name);
@@ -91,7 +96,7 @@ void my_unregister_user_devices(void)
 /* Driver attributes */
 static ssize_t commands_show(struct device_driver *dev, char *buf)
 {
-    return snprintf(buf, PAGE_SIZE, "%s\n", "Command list:\n create device: create device_name device_capacity (in sectors)\n");
+    return snprintf(buf, PAGE_SIZE, "%s\n", DEVICE_COMMAND_LIST);
 }
 
 static ssize_t input_command_store(struct device_driver *dev, const char *buf, size_t count)
@@ -111,7 +116,7 @@ static ssize_t input_command_store(struct device_driver *dev, const char *buf, s
 
 	if (!strncmp(command, DEVICE_COMMAND_CREATE, strlen(DEVICE_COMMAND_CREATE)))
     {
-		pr_info("MYDRIVE: (commands) starting device creation (parameters: name = %s, capacity = %d)...\n");
+		pr_info("MYDRIVE: (commands) starting device creation (parameters: name = %s, capacity = %d)...\n", device_name, device_size);
 
 		if (device_size <= 0)
         {
@@ -140,6 +145,22 @@ static ssize_t input_command_store(struct device_driver *dev, const char *buf, s
 		}
         pr_info("MYDRIVE: (userdevice) device registered on bus");
 	}
+    else if (!strncmp(command, DEVICE_COMMAND_SETMODE, strlen(DEVICE_COMMAND_SETMODE))) {
+        pr_info("MYDRIVE: (commands) starting device mode setting (parameters: name = %s, mode = %d)...\n", device_name, device_size);
+        if (device_size < 0 || device_size > 1)
+        {
+            pr_warning("MYDRIVE: (setmode) mode must 1 - readonly or 0 - read & write\n", device_name);
+            return count;
+        }
+        device = list_search_name(user_device_list_head, device_name) -> device;
+        if (!device)
+        {
+            pr_warning("MYDRIVE: (setmode) device with name %s not found\n", device_name);
+            return count;
+        }
+        device -> mode = device_size;
+        pr_info("MYDRIVE: (setmode) device %s mode set to %d\n", device_name, device_size);
+    }
 	else pr_info("MYDRIVE: (commands) command is not recognised. view list of available commands in commands attribute");
 	return count;
 }

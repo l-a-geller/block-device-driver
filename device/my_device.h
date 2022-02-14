@@ -13,6 +13,7 @@ struct block_dev {
 	struct request_queue *queue;
 	struct gendisk *gd;
 	struct device dev;
+    int mode; /* 0-read only, 1-read&write */
 };
 
 /* List of user devices & opearations with it: create, add, destroy */
@@ -35,6 +36,23 @@ void list_add_front(struct user_device_list** old_head, struct block_dev *dev)
 	new_head -> next = *old_head;
 	*old_head = new_head;
 }
+
+struct user_device_list* list_search_name(struct user_device_list *list, char* name)
+{
+    const struct device *dev = &(list -> device -> dev);
+    struct user_device_list* res = NULL;
+    while (list)
+    {
+        if (!dev_name(dev) || !strncmp(dev_name(dev) , name, strlen(name)))
+        {
+            res = list;
+            break;
+        }
+        list  = list -> next;
+    }
+    return res;
+}
+
 
 void list_destroy(struct user_device_list *list)
 {
@@ -103,10 +121,17 @@ static int do_transfer(struct request *rq, unsigned int *nr_bytes)
 		    b_len = (unsigned long) (dev_size - pos);
 		}
 
-		if (rq_data_dir(rq) == WRITE)
+		if (rq_data_dir(rq) == WRITE )
         {
-		    /* Write data to the buffer into required position */
-		    memcpy(dev -> data + pos, b_buf, b_len);
+            if (dev -> mode)
+            {
+                pr_warning("MYDRIVE: (device) don't try to write to read only device\n");
+            }
+            else
+            {
+                /* Write data to the buffer into required position */
+                memcpy(dev -> data + pos, b_buf, b_len);
+            }
 		}
         else
         {
@@ -168,6 +193,7 @@ static int create_block_device(struct block_dev **dev_pointer, char *dev_name, s
     }
 
     pr_info("MYDRIVE: (device) allocationg data\n");
+    dev -> mode = 1;
 	dev -> capacity = capacity;
 	dev -> data = kmalloc(capacity << 9, GFP_KERNEL);
 	if (!dev -> data)
