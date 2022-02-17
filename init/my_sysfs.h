@@ -48,7 +48,7 @@ static struct my_driver mydriver = {
 	},
 };
 
-int my_register_driver(struct my_driver *driver)
+int my_driver_register(struct my_driver *driver)
 {
 	int status;
 
@@ -59,24 +59,24 @@ int my_register_driver(struct my_driver *driver)
 	return 0;
 }
 
-void my_unregister_driver(struct my_driver *driver)
+void my_driver_unregister(struct my_driver *driver)
 {
 	driver_unregister(&driver->driver);
 }
 
 /* Registering & unregestering device */
-int my_register_device(struct block_dev *mydev, char *dev_name)
+int my_device_register(struct block_dev *mydev, char *dev_name)
 {
 	int res;
 
 	mydev->dev.bus = &my_bus_type;
-	mydev->dev.release = my_dev_release;
+	mydev->dev.release = my_device_release_from_bus;
 	dev_set_name(&mydev->dev, dev_name);
 	res = device_register(&mydev->dev);
 	return res;
 }
 
-void my_unregister_device(struct block_dev *mydev)
+void my_device_unregister(struct block_dev *mydev)
 {
 	pr_info("MYDRIVE: (device) unregistering device...\n");
 	if (!mydev->gd)
@@ -85,16 +85,16 @@ void my_unregister_device(struct block_dev *mydev)
 		return;
 	unregister_blkdev(mydev->gd->major, mydev->gd->disk_name);
 	pr_info("MYDRIVE: (device) default device unregistered\n");
-	delete_block_device(mydev);
+	my_device_delete(mydev);
 	device_unregister(&mydev->dev);
 	kfree(mydev);
 	pr_info("MYDRIVE: (device) default device removed\n");
 }
 
-void my_unregister_user_devices(void)
+void my_user_devices_unregister(void)
 {
 	while (user_device_list_head) {
-		my_unregister_device(user_device_list_head->device);
+		my_device_unregister(user_device_list_head->device);
 		user_device_list_head = user_device_list_head->next;
 	}
 	list_destroy(user_device_list_head);
@@ -142,7 +142,7 @@ static ssize_t input_command_store(struct device_driver *dev,
 		 * but it needs to be made to look not that scary)
 		 */
 
-		status = create_block_device(&device, device_name, device_size);
+		status = my_device_create(&device, device_name, device_size);
 		if (status < 0) {
 			pr_warn("MYDRIVE: (userdevice) device init failed\n");
 			goto out_free_parameter_buffers;
@@ -150,7 +150,7 @@ static ssize_t input_command_store(struct device_driver *dev,
 		pr_info("MYDRIVE: (userdevice) device created");
 		node_create(device);
 		list_add_front(&user_device_list_head, device);
-		status = my_register_device(device, device_name);
+		status = my_device_register(device, device_name);
 		if (status) {
 			pr_warn("MYDRIVE: (userdevice) device registration on bus failed\n");
 			goto out_free_parameter_buffers;
@@ -203,24 +203,24 @@ const char *sysfs_registration_error_messages
 	[SYSFSREGISTRATON_DRIVER_FAILED] =
 		"driver registration on bus failed",
 	[SYSFSREGISTRATON_DRIVER_AC_FAILED] =
-		"driver commands attribute creation failed, driver initialized with no device usercreation",
+		"driver commands attribute creation failed",
 	[SYSFSREGISTRATON_DRIVER_AI_FAILED] =
-		"driver input_command attribute creation failed, driver initialized with no device usercreation"
+		"driver input_command attribute creation failed"
 };
 
 /* Register bus, driver on a bus and driver attributes */
 enum sysfs_registration_status my_sysfs_init(
-	int is_user_device_registration_enabled)
+	int mode)
 {
-	/* Registering a sysfs bus */
 	int status;
 
+	/* Registering a sysfs bus */
 	status = bus_register(&my_bus_type);
 	if (status)
 		return SYSFSREGISTRATON_BUS_FAILED;
 
 	/* Registering a driver */
-	status = my_register_driver(&mydriver);
+	status = my_driver_register(&mydriver);
 	if (status) {
 		bus_unregister(&my_bus_type);
 		return SYSFSREGISTRATON_DRIVER_FAILED;
@@ -231,28 +231,34 @@ enum sysfs_registration_status my_sysfs_init(
 	 * input_command - user inputs commands and receives results
 	 * )
 	 */
-	if (is_user_device_registration_enabled) {
+	if (mode == 1) {
 		status = driver_create_file(&(mydriver.driver),
 					    &driver_attr_commands);
-		if (status)
+		if (status) {
+			my_driver_unregister(&mydriver);
+			bus_unregister(&my_bus_type);
 			return SYSFSREGISTRATON_DRIVER_AC_FAILED;
+		}
 		status = driver_create_file(&(mydriver.driver),
 					    &driver_attr_input_command);
-		if (status)
+		if (status) {
+			my_driver_unregister(&mydriver);
+			bus_unregister(&my_bus_type);
 			return SYSFSREGISTRATON_DRIVER_AI_FAILED;
+		}
 	}
 	return SYSFSREGISTRATON_OK;
 }
 
-void my_sysfs_exit(int is_user_device_registration_enabled)
+void my_sysfs_exit(int mode)
 {
-	if (is_user_device_registration_enabled) {
+	if (mode == 1) {
 		driver_remove_file(&(mydriver.driver),
 				   &driver_attr_commands);
 		driver_remove_file(&(mydriver.driver),
 				   &driver_attr_input_command);
 	}
-	my_unregister_driver(&mydriver);
+	my_driver_unregister(&mydriver);
 	bus_unregister(&my_bus_type);
 }
 

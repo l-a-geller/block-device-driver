@@ -70,7 +70,7 @@ void list_destroy(struct user_device_list *list)
 	}
 }
 
-static void my_dev_release(struct device *dev)
+static void my_device_release_from_bus(struct device *dev)
 {
 	/* what to do on device release from a bus,
 	 * not much here because we release all devices at once
@@ -79,13 +79,13 @@ static void my_dev_release(struct device *dev)
 	pr_info("MYDRIVE: (device) bus device release requested\n");
 }
 
-static int block_dev_open(struct block_device *bdev, fmode_t mode)
+static int my_device_open(struct block_device *bdev, fmode_t mode)
 {
 	pr_info("MYDRIVE: (device) Device opened\n");
 	return 0;
 }
 
-static void block_dev_release(struct gendisk *gd, fmode_t mode)
+static void my_device_release(struct gendisk *gd, fmode_t mode)
 {
 	pr_info("MYDRIVE: (device) Device released\n");
 }
@@ -100,8 +100,8 @@ int block_dev_ioctl(struct block_device *bdev,
 
 static const struct block_device_operations blockdev_ops = {
 	.owner = THIS_MODULE,
-	.open = block_dev_open,
-	.release = block_dev_release,
+	.open = my_device_open,
+	.release = my_device_release,
 	.ioctl = block_dev_ioctl
 };
 
@@ -171,7 +171,7 @@ static const struct blk_mq_ops mq_ops = {
 	.queue_rq = queue_rq,
 };
 
-struct block_dev *allocate_device(struct block_dev **dev_pointer)
+struct block_dev *my_device_allocate(struct block_dev **dev_pointer)
 {
 	*dev_pointer = kmalloc(sizeof(struct block_dev), GFP_KERNEL);
 
@@ -180,13 +180,14 @@ struct block_dev *allocate_device(struct block_dev **dev_pointer)
 	return *dev_pointer;
 }
 
-static int create_block_device(struct block_dev **dev_pointer,
+static int my_device_create(struct block_dev **dev_pointer,
 				char *dev_name,
 				sector_t capacity)
 {
 	int dev_major;
-	struct block_dev *dev = allocate_device(dev_pointer);
+	struct block_dev *dev;
 
+	dev = my_device_allocate(dev_pointer);
 	if (!dev) {
 		pr_warn("MYDRIVE: (device) Unable to allocate device\n");
 		return -ENOMEM;
@@ -216,9 +217,9 @@ static int create_block_device(struct block_dev **dev_pointer,
 					  QUEUE_DEPTH,
 					  BLK_MQ_F_SHOULD_MERGE);
 	if (!dev->queue) {
+		kfree(dev->data);
 		unregister_blkdev(dev_major, dev_name);
 		kfree(dev);
-		kfree(dev->data);
 		pr_warn("MYDRIVE: (device) failed to allocate device queue\n");
 		return -ENOMEM;
 	}
@@ -245,7 +246,7 @@ static int create_block_device(struct block_dev **dev_pointer,
 	return 0;
 }
 
-static void delete_block_device(struct block_dev *dev)
+static void my_device_delete(struct block_dev *dev)
 {
 	if (dev->gd) {
 		del_gendisk(dev->gd);

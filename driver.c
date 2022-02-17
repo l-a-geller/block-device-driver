@@ -30,15 +30,16 @@ static int __init my_driver_init(void)
 	sysr_status = my_sysfs_init(mode);
 	if (sysr_status != SYSFSREGISTRATON_OK) {
 		pr_warn("MYDRIVE: (sysfs) %s\n",
-			sysfs_registration_error_messages[status]);
-		return status;
+			sysfs_registration_error_messages[sysr_status]);
+		return -sysr_status;
 	}
 	pr_info("MYDRIVE: (sysfs) registered bus %s\n",
 		my_bus_type.name);
 	pr_info("MYDRIVE: (sysfs) registered driver %s on bus %s\n",
 		mydriver.driver.name,
 		my_bus_type.name);
-	pr_info("MYDRIVE: (sysfs) added attributes command, input_command on driver %s\n",
+	if (mode == 1)
+		pr_info("MYDRIVE: (sysfs) added attributes command, input_command on driver %s\n",
 		mydriver.driver.name);
 
 	if (mode == 1) {
@@ -47,18 +48,21 @@ static int __init my_driver_init(void)
 	}
 	pr_info("MYDRIVE: (mode) auto device creation mode entered\n");
 
-	status = create_block_device(&device,
+	status = my_device_create(&device,
 				     DEFAULT_DEVICE_NAME,
 				     DEFAULT_DEVICE_CAPACITY);
 	if (status < 0) {
 		pr_warn("MYDRIVE: (defaultdevice) default device init failed\n");
+		my_sysfs_exit(mode);
 		return status;
 	}
 	pr_info("MYDRIVE: (defaultdevice) default device created\n");
 
-	status = my_register_device(device, DEFAULT_DEVICE_NAME);
+	status = my_device_register(device, DEFAULT_DEVICE_NAME);
 	if (status) {
 		pr_warn("MYDRIVE: (defaultdevice) device registration on bus failed\n");
+		my_device_delete(device);
+		my_sysfs_exit(mode);
 		return -status;
 	}
 	pr_info("MYDRIVE: (defaultdevice) default device registered on bus\n");
@@ -73,10 +77,10 @@ static void __exit my_driver_exit(void)
 	pr_info("MYDRIVE: EXITING MODULE...\n");
 	if (mode == 1) {
 		// clearing userdefined devices
-		my_unregister_user_devices();
+		my_user_devices_unregister();
 	} else if (device) {
 		// clearing autocreated device
-		my_unregister_device(device);
+		my_device_unregister(device);
 	}
 
 	my_sysfs_exit(mode);
