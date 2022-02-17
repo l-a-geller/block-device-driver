@@ -52,6 +52,7 @@ int my_driver_register(struct my_driver *driver)
 {
 	int status;
 
+	//if (!driver->driver) return -
 	driver->driver.bus = &my_bus_type;
 	status = driver_register(&driver->driver);
 	if (status)
@@ -78,17 +79,20 @@ int my_device_register(struct block_dev *mydev, char *dev_name)
 
 void my_device_unregister(struct block_dev *mydev)
 {
-	pr_info("MYDRIVE: (device) unregistering device...\n");
 	if (!mydev->gd)
 		return;
 	if (!mydev->gd->major || !mydev->gd->disk_name)
 		return;
+	/* Releasing major */
 	unregister_blkdev(mydev->gd->major, mydev->gd->disk_name);
-	pr_info("MYDRIVE: (device) default device unregistered\n");
+
+	/* Clearing device internals (gd, queue, data) */
 	my_device_delete(mydev);
+
+	/* Unregistering device from a bus */
 	device_unregister(&mydev->dev);
+
 	kfree(mydev);
-	pr_info("MYDRIVE: (device) default device removed\n");
 }
 
 void my_user_devices_unregister(void)
@@ -97,6 +101,7 @@ void my_user_devices_unregister(void)
 		my_device_unregister(user_device_list_head->device);
 		user_device_list_head = user_device_list_head->next;
 	}
+
 	list_destroy(user_device_list_head);
 }
 
@@ -115,6 +120,7 @@ static ssize_t input_command_store(struct device_driver *dev,
 	int device_size;
 	int status;
 	struct block_dev *device;
+	struct user_device_list *usr_dev;
 
 	command = kmalloc_array(count, sizeof(char), GFP_KERNEL);
 	device_name = kmalloc_array(count, sizeof(char), GFP_KERNEL);
@@ -162,17 +168,25 @@ static ssize_t input_command_store(struct device_driver *dev,
 		pr_info("MYDRIVE: (commands) starting device mode setting (parameters: name = %s, mode = %d)...\n",
 			device_name,
 			device_size);
+
+		if (!user_device_list_head) {
+			pr_warn("MYDRIVE: (setmode) no devices created yet, setmode failed\n");
+			goto out_free_parameter_buffers;
+		}
+
 		if (device_size < 0 || device_size > 1) {
 			pr_warn("MYDRIVE: (setmode) mode must 1 - readonly or 0 - read & write\n");
 			goto out_free_parameter_buffers;
 		}
-		device = list_search_name(user_device_list_head,
-					  device_name)->device;
-		if (!device) {
+
+		usr_dev = list_search_name(user_device_list_head,
+					   device_name);
+		if (!usr_dev || !usr_dev->device) {
 			pr_warn("MYDRIVE: (setmode) device with name %s not found\n",
 				device_name);
 			goto out_free_parameter_buffers;
 		}
+		device = usr_dev->device;
 		device->mode = device_size;
 		pr_info("MYDRIVE: (setmode) device %s mode set to %d\n",
 			device_name,

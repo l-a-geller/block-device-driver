@@ -49,9 +49,9 @@ struct user_device_list *list_search_name(struct user_device_list *list,
 	const struct device *dev;
 	struct user_device_list *res;
 
-	dev = &(list->device->dev);
-	while (list) {
-		if (!dev_name(dev) ||
+	while (list && list->device) {
+		dev = &(list->device->dev);
+		if (dev_name(dev) &&
 			!strncmp(dev_name(dev), name, strlen(name))) {
 			res = list;
 			break;
@@ -193,6 +193,7 @@ static int my_device_create(struct block_dev **dev_pointer,
 		return -ENOMEM;
 	}
 
+	/* Getting a major */
 	dev_major = register_blkdev(0, dev_name);
 	if (dev_major < 0) {
 		kfree(dev);

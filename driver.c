@@ -75,6 +75,7 @@ static int __init my_driver_init(void)
 static void __exit my_driver_exit(void)
 {
 	pr_info("MYDRIVE: EXITING MODULE...\n");
+	pr_info("MYDRIVE: (device) unregistering devices...\n");
 	if (mode == 1) {
 		// clearing userdefined devices
 		my_user_devices_unregister();
@@ -82,6 +83,7 @@ static void __exit my_driver_exit(void)
 		// clearing autocreated device
 		my_device_unregister(device);
 	}
+	pr_info("MYDRIVE: (device) device unregistered\n");
 
 	my_sysfs_exit(mode);
 	pr_info("MYDRIVE: (sysfs) unregistered bus & driver\n");
