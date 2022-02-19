@@ -29,8 +29,10 @@ struct user_device_list *node_create(struct block_dev *dev)
 	struct user_device_list *lst;
 
 	lst = kmalloc(sizeof(struct user_device_list), GFP_KERNEL);
-	lst->device = dev;
-	lst->next = NULL;
+	if (lst) {
+		lst->device = dev;
+		lst->next = NULL;
+	}
 	return lst;
 }
 
@@ -41,6 +43,21 @@ void list_add_front(struct user_device_list **old_head, struct block_dev *dev)
 	new_head = node_create(dev);
 	new_head->next = *old_head;
 	*old_head = new_head;
+}
+
+int list_check_unique_name(struct user_device_list *list, char *name)
+{
+	const struct device *dev;
+
+	while (list && list->device) {
+		dev = &(list->device->dev);
+		if (dev_name(dev) &&
+		    !strncmp(dev_name(dev), name, strlen(name))) {
+			return -1;
+		}
+		list  = list->next;
+	}
+	return 0;
 }
 
 struct user_device_list *list_search_name(struct user_device_list *list,

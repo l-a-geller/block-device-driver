@@ -52,7 +52,8 @@ int my_driver_register(struct my_driver *driver)
 {
 	int status;
 
-	//if (!driver->driver) return -
+	if (!driver)
+		return -1;
 	driver->driver.bus = &my_bus_type;
 	status = driver_register(&driver->driver);
 	if (status)
@@ -62,6 +63,8 @@ int my_driver_register(struct my_driver *driver)
 
 void my_driver_unregister(struct my_driver *driver)
 {
+	if (!driver)
+		return;
 	driver_unregister(&driver->driver);
 }
 
@@ -70,6 +73,8 @@ int my_device_register(struct block_dev *mydev, char *dev_name)
 {
 	int res;
 
+	if (!mydev || !dev_name)
+		return -1;
 	mydev->dev.bus = &my_bus_type;
 	mydev->dev.release = my_device_release_from_bus;
 	dev_set_name(&mydev->dev, dev_name);
@@ -79,7 +84,7 @@ int my_device_register(struct block_dev *mydev, char *dev_name)
 
 void my_device_unregister(struct block_dev *mydev)
 {
-	if (!mydev->gd)
+	if (!mydev || !mydev->gd)
 		return;
 	if (!mydev->gd->major || !mydev->gd->disk_name)
 		return;
@@ -111,88 +116,139 @@ static ssize_t commands_show(struct device_driver *dev, char *buf)
 	return snprintf(buf, PAGE_SIZE, "%s\n", DEVICE_COMMAND_LIST);
 }
 
+static int user_device_create(char *device_name, int device_size)
+{
+	int status;
+	struct block_dev *device;
+
+	pr_info("MYDRIVE: (commands) starting device creation (parameters: name = %s, capacity = %d)...\n",
+		device_name,
+		device_size);
+
+	if (device_size <= 0) {
+		pr_warn("MYDRIVE: (userdevice) device capacity (sectors count) should be a positive integer\n");
+		return -1;
+	}
+
+	status = list_check_unique_name(user_device_list_head, device_name);
+	if (status < 0) {
+		pr_warn("MYDRIVE: (userdevice) device with name %s already exists, choose another name\n",
+			device_name);
+		return -2;
+	}
+	/* TODO: check on device_name uniqueness
+	 * (kernel prints an error if device name repeats,
+	 * but it needs to be made to look not that scary)
+	 */
+
+	status = my_device_create(&device, device_name, device_size);
+	if (status < 0) {
+		pr_warn("MYDRIVE: (userdevice) device init failed\n");
+		return -3;
+	}
+	pr_info("MYDRIVE: (userdevice) device created\n");
+
+	status = my_device_register(device, device_name);
+	if (status) {
+		pr_warn("MYDRIVE: (userdevice) device registration on bus failed\n");
+		my_device_delete(device);
+		return -4;
+	}
+
+	if (!node_create(device)) {
+		pr_warn("MYDRIVE: (userdevice) device adding to list of user devices failed\n");
+		my_device_unregister(device);
+		my_device_delete(device);
+		return -5;
+	}
+	list_add_front(&user_device_list_head, device);
+
+	pr_info("MYDRIVE: (userdevice) device registered on bus\n");
+	return 0;
+}
+
+static int user_device_setmode(char *device_name, int device_mode)
+{
+	struct user_device_list *usr_dev;
+	struct block_dev *device;
+
+	pr_info("MYDRIVE: (commands) starting device mode setting (parameters: name = %s, mode = %d)...\n",
+		device_name,
+		device_mode);
+
+	if (!user_device_list_head) {
+		pr_warn("MYDRIVE: (setmode) no devices created yet, setmode failed\n");
+		return -1;
+	}
+
+	if (device_mode < 0 || device_mode > 1) {
+		pr_warn("MYDRIVE: (setmode) mode must 1 - readonly or 0 - read & write\n");
+		return -2;
+	}
+
+	usr_dev = list_search_name(user_device_list_head,
+				   device_name);
+	if (!usr_dev || !usr_dev->device) {
+		pr_warn("MYDRIVE: (setmode) device with name %s not found\n",
+			device_name);
+		return -3;
+	}
+	device = usr_dev->device;
+	device->mode = device_mode;
+	pr_info("MYDRIVE: (setmode) device %s mode set to %d\n",
+		device_name,
+		device_mode);
+	return 0;
+}
+
+static void command_find(char *command, char *device_name, int argument)
+{
+	int status;
+
+	if (!strncmp(command,
+		     DEVICE_COMMAND_CREATE,
+		     strlen(DEVICE_COMMAND_CREATE))) {
+		status = user_device_create(device_name, argument);
+		if (status < 0)
+			pr_warn("MYDRIVE: (commands) error on create\n");
+	} else if (!strncmp(command,
+			    DEVICE_COMMAND_SETMODE,
+			    strlen(DEVICE_COMMAND_SETMODE))) {
+		status = user_device_setmode(device_name, argument);
+		if (status < 0)
+			pr_warn("MYDRIVE: (commands) error on setmode\n");
+	} else {
+		pr_info("MYDRIVE: (commands) command is not recognised. view list of available commands in commands attribute\n");
+	}
+}
+
 static ssize_t input_command_store(struct device_driver *dev,
 				const char *buf,
 				size_t count)
 {
 	char *command;
 	char *device_name;
-	int device_size;
+	int argument;
 	int status;
-	struct block_dev *device;
-	struct user_device_list *usr_dev;
 
 	command = kmalloc_array(count, sizeof(char), GFP_KERNEL);
+	if (!command)
+		return count;
 	device_name = kmalloc_array(count, sizeof(char), GFP_KERNEL);
+	if (!device_name) {
+		kfree(command);
+		pr_warn("MYDRIVE: (commands) couldn't allocate device_name, input probably is too long\n");
+		return count;
+	}
 
-	status = sscanf(buf, "%s %s %d", command, device_name, &device_size);
+	status = sscanf(buf, "%s %s %d", command, device_name, &argument);
 	if (status != 3) {
 		pr_warn("MYDRIVE: (commands) couldn't recognise a command\n");
 		goto out_free_parameter_buffers;
 	}
 	pr_info("MYDRIVE: (commands) command received: %s\n", command);
 
-	if (!strncmp(command,
-		     DEVICE_COMMAND_CREATE,
-		     strlen(DEVICE_COMMAND_CREATE))) {
-		pr_info("MYDRIVE: (commands) starting device creation (parameters: name = %s, capacity = %d)...\n",
-			device_name,
-			device_size);
-
-		if (device_size <= 0) {
-			pr_info("MYDRIVE_COMMANDS: (userdevice) device capacity (sectors count) should be a positive integer\n");
-			goto out_free_parameter_buffers;
-		}
-		/* TODO: check on device_name uniqueness
-		 * (kernel prints an error if device name repeats,
-		 * but it needs to be made to look not that scary)
-		 */
-
-		status = my_device_create(&device, device_name, device_size);
-		if (status < 0) {
-			pr_warn("MYDRIVE: (userdevice) device init failed\n");
-			goto out_free_parameter_buffers;
-		}
-		pr_info("MYDRIVE: (userdevice) device created");
-		node_create(device);
-		list_add_front(&user_device_list_head, device);
-		status = my_device_register(device, device_name);
-		if (status) {
-			pr_warn("MYDRIVE: (userdevice) device registration on bus failed\n");
-			goto out_free_parameter_buffers;
-		}
-		pr_info("MYDRIVE: (userdevice) device registered on bus");
-	} else if (!strncmp(command,
-			    DEVICE_COMMAND_SETMODE,
-			    strlen(DEVICE_COMMAND_SETMODE))) {
-		pr_info("MYDRIVE: (commands) starting device mode setting (parameters: name = %s, mode = %d)...\n",
-			device_name,
-			device_size);
-
-		if (!user_device_list_head) {
-			pr_warn("MYDRIVE: (setmode) no devices created yet, setmode failed\n");
-			goto out_free_parameter_buffers;
-		}
-
-		if (device_size < 0 || device_size > 1) {
-			pr_warn("MYDRIVE: (setmode) mode must 1 - readonly or 0 - read & write\n");
-			goto out_free_parameter_buffers;
-		}
-
-		usr_dev = list_search_name(user_device_list_head,
-					   device_name);
-		if (!usr_dev || !usr_dev->device) {
-			pr_warn("MYDRIVE: (setmode) device with name %s not found\n",
-				device_name);
-			goto out_free_parameter_buffers;
-		}
-		device = usr_dev->device;
-		device->mode = device_size;
-		pr_info("MYDRIVE: (setmode) device %s mode set to %d\n",
-			device_name,
-			device_size);
-	} else
-		pr_info("MYDRIVE: (commands) command is not recognised. view list of available commands in commands attribute");
+	command_find(command, device_name, argument);
 
 out_free_parameter_buffers:
 	kfree(command);

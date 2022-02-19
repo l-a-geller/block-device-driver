@@ -77,10 +77,10 @@ static void __exit my_driver_exit(void)
 	pr_info("MYDRIVE: EXITING MODULE...\n");
 	pr_info("MYDRIVE: (device) unregistering devices...\n");
 	if (mode == 1) {
-		// clearing userdefined devices
+		/* clearing userdefined devices */
 		my_user_devices_unregister();
 	} else if (device) {
-		// clearing autocreated device
+		/* clearing autocreated device */
 		my_device_unregister(device);
 	}
 	pr_info("MYDRIVE: (device) device unregistered\n");
